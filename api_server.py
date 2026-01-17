@@ -67,102 +67,157 @@ def start_watching():
         env = os.environ.copy()
         env['PYTHONIOENCODING'] = 'utf-8'
         
-        # Arkaplan süreciyle başlat
+        # Arkaplan süreciyle başlat - PIPE kullanarak
         watching_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # stderr'ı da yakala
+            stderr=subprocess.STDOUT,
             text=True,
             encoding='utf-8',
-            errors='replace',  # Encoding hatalarını görmezden gel
+            errors='replace',
             bufsize=1,  # Line buffered
             cwd=os.path.dirname(os.path.abspath(__file__)),
             env=env
         )
         
-        # Thread ile output'u oku
+        # Thread ile watcher process'ini izle
         def read_output():
             global last_status
             check_count = 0
+            logs = []
+            
             try:
-                for line in watching_process.stdout:
-                    line_clean = line.strip()
-                    print(f"[BACKEND] {line_clean}")
-                    
-                    # Vagon tipi bu seferde yok mu kontrol et (case-insensitive)
-                    if 'vagon tipi bu seferde bulunmuyor' in line_clean.lower():
-                        last_status["watching"] = False
-                        last_status["ticket_found"] = False
-                        last_status["wagon_not_found"] = True
-                        wagon_display = wagon_type if wagon_type != 'ALL' else 'İstenen'
-                        last_status["message"] = f"Bu güzergahta {wagon_display} koltuk bulunmamaktadır."
-                        print(f"[INFO] ⚠️ VAGON TİPİ BULUNAMADI: {wagon_type} bu hatta mevcut değil!")
-                        print(f"[INFO] İzleme otomatik olarak durduruluyor...")
-                        break
-                    
-                    # Kontrol sayısını yakala
-                    if 'Kontrol #' in line_clean:
-                        import re
-                        match = re.search(r'Kontrol #(\d+)', line_clean)
-                        if match:
-                            check_count = int(match.group(1))
-                            last_status["check_count"] = check_count
-                            last_status["last_check_time"] = datetime.now().strftime('%H:%M:%S')
-                    
-                    # Sadece seçilen vagon tipini kontrol et
-                    line_upper = line_clean.upper()
-                    
-                    # Vagon tipi bilgisi var mı kontrol et
-                    if 'VAGON DURUMU' in line_upper or 'WAGON STATUS' in line_upper:
-                        # Seçilen vagon tipi bu satırda mı?
-                        if wagon_type.upper() in line_upper or wagon_type == 'ALL':
-                            # MÜSAİT mi kontrol et
-                            if any(keyword in line_upper for keyword in ['MÜSAİT', 'MUSAIT', 'AVAILABLE']):
-                                # DOLU değilse gerçekten müsait
-                                if 'DOLU' not in line_upper and 'FULL' not in line_upper:
-                                    # Gerçekten bulunan vagon tipini tespit et
-                                    found_wagon = wagon_type
-                                    if wagon_type == 'ALL':
-                                        # ALL seçiliyse, satırdan vagon tipini çıkar
-                                        if 'EKONOMİ' in line_upper or 'EKONOMI' in line_upper:
-                                            found_wagon = 'EKONOMİ'
-                                        elif 'BUSINESS' in line_upper:
-                                            found_wagon = 'BUSINESS'
-                                        elif 'YATAKLI' in line_upper:
-                                            found_wagon = 'YATAKLI'
-                                    
-                                    last_status["ticket_found"] = True
-                                    last_status["found_wagon_type"] = found_wagon
-                                    last_status["message"] = f"Bu güzergahta {found_wagon} bilet bulundu."
-                                    print(f"[INFO] BİLET BULUNDU! Vagon: {found_wagon}, Mesaj: {last_status['message']}")
-                    
-                    # Fiyat bilgisi varsa ekle
-                    if '₺' in line_clean or 'TL' in line_clean.upper():
-                        if 'Fiyat' in line_clean or 'Price' in line_clean:
-                            last_status["price"] = line_clean
+                print(f"[INFO] Watcher process başlatıldı, stdout okunuyor...")
                 
-                # Process tamamlandı
+                # Stdout'u satır satır oku - readline ile
+                for line in iter(watching_process.stdout.readline, ''):
+                    line = line.strip()
+                    if line:
+                        print(f"[WATCHER] {line}")
+                        # Log listesine ekle
+                        logs.append(line)
+                        if len(logs) > 20:
+                            logs.pop(0)
+                        last_status["logs"] = logs.copy()
+                        
+                        # Kontrol sayısını ve zamanı takip et
+                        if "Kontrol #" in line:
+                            check_count += 1
+                            if " - " in line:
+                                time_part = line.split(" - ")[-1].strip()
+                                last_status["last_check_time"] = time_part
+                            last_status["check_count"] = check_count
+                            
+                        # Bilet bulundu kontrolü (Log üzerinden)
+                        if "BİLET BULUNDU" in line or "MÜSAİT durumunda" in line or "BİLET AÇILDI" in line:
+                            print(f"[INFO] Logdan tespit edildi: Bilet Bulundu!")
+                            last_status["ticket_found"] = True
+                            
+                            # Detaylı vagon bilgisi parse et
+                            if "BİLET BULUNDU" in line and "(" in line and ")" in line:
+                                try:
+                                    start = line.find("(") + 1
+                                    end = line.find(")")
+                                    wagons_str = line[start:end]
+                                    last_status["message"] = f"Bilet Bulundu! ({wagons_str})"
+                                except:
+                                    last_status["message"] = f"Bilet Bulundu! ({watching_params['wagon_type']})"
+                            elif watching_params['wagon_type'] != 'ALL':
+                                last_status["message"] = f"Bilet Bulundu! ({watching_params['wagon_type']})"
+                            else:
+                                last_status["message"] = "Bilet Bulundu! (Detaylar logda)"
+                            
+                        # Vagon bulunamadı kontrolü (Log üzerinden) - Sadece watcher uyarısı ile
+                        if "Vagon tipi mevcut değil" in line or "State'e vagon bulunamadı durumu kaydedildi" in line:
+                            if watching_params['wagon_type'] != 'ALL':
+                                last_status["wagon_not_found"] = True
+                
+                print(f"[INFO] Watcher process tamamlandı!")
                 last_status["watching"] = False
                 
-                # State dosyasını oku - watcher'ın sonucunu buradan al (daha güvenilir)
+                # Process bittikten sonra state dosyasını oku ve sonucu işle
+                print(f"[INFO] State dosyası okunuyor...")
                 try:
                     import json
+                    import time
+                    time.sleep(1)  # State dosyasının yazılmasını bekle
                     state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state.json')
                     if os.path.exists(state_file):
                         with open(state_file, 'r', encoding='utf-8') as f:
                             state_data = json.load(f)
+                            
                             # state_key formatı: FROM_TO_DATE_WAGONTYPE_Np
-                            state_key = f"{watching_params['from'].upper()}_{watching_params['to'].upper()}_{watching_params['date']}_{watching_params['wagon_type']}_{watching_params['passengers']}p"
+                            # Watcher orijinal haliyle (upper olmadan) kaydediyor olabilir, o yüzden önce direkt dene
+                            state_key = f"{watching_params['from']}_{watching_params['to']}_{watching_params['date']}_{watching_params['wagon_type']}_{watching_params['passengers']}p"
+                            
+                            print(f"[DEBUG] read_output - Aranan key (orijinal): {state_key}")
+                            
+                            # Önce direkt eşleşme dene
+                            wagon_state = None
                             if state_key in state_data:
                                 wagon_state = state_data[state_key]
-                                # Eğer status DOLU değilse ve price None ise, vagon bulunamadı demektir
-                                if wagon_state.get('status') == 'DOLU' and wagon_state.get('price') is None:
-                                    print(f"[INFO] State'e göre {watching_params['wagon_type']} vagonu bu hatta yok!")
+                                print(f"[DEBUG] read_output - Direkt eşleşme bulundu: {state_key}")
+                            else:
+                                # Bulunamazsa normalizasyon ile dene (eski kayıtlar için)
+                                # Türkçe karakter normalizasyonu
+                                def normalize_turkish(s):
+                                    replacements = {
+                                        'ı': 'I', 'İ': 'I', 'i': 'I',
+                                        'ğ': 'G', 'Ğ': 'G',
+                                        'ü': 'U', 'Ü': 'U',
+                                        'ş': 'S', 'Ş': 'S',
+                                        'ö': 'O', 'Ö': 'O',
+                                        'ç': 'C', 'Ç': 'C'
+                                    }
+                                    result = s.upper()
+                                    for old, new in replacements.items():
+                                        result = result.replace(old, new)
+                                    return result
+                                
+                                # Normalize edilmiş state key oluştur
+                                from_normalized = normalize_turkish(watching_params['from'])
+                                to_normalized = normalize_turkish(watching_params['to'])
+                                search_key = f"{from_normalized}_{to_normalized}_{watching_params['date']}_{watching_params['wagon_type']}_{watching_params['passengers']}p"
+                                
+                                print(f"[DEBUG] read_output - Aranan key (normalize): {search_key}")
+                                
+                                # Fuzzy match ile state'den bul
+                                for key in state_data.keys():
+                                    normalized_key = normalize_turkish(key)
+                                    if normalized_key == search_key:
+                                        wagon_state = state_data[key]
+                                        print(f"[DEBUG] read_output - Fuzzy match bulundu: {key}")
+                                        break
+                            
+                            if wagon_state:
+                                print(f"[DEBUG] State data: {wagon_state}")
+                                # Önce wagon_not_found flag'ini kontrol et
+                                if wagon_state.get('wagon_not_found') == True:
+                                    print(f"[INFO] ✅ State'de wagon_not_found=True - {watching_params['wagon_type']} vagonu bu hatta yok!")
                                     last_status["wagon_not_found"] = True
                                     wagon_display = watching_params['wagon_type'] if watching_params['wagon_type'] != 'ALL' else 'İstenen'
                                     last_status["message"] = f"Bu güzergahta {wagon_display} koltuk bulunmamaktadır."
+                                # Eğer status DOLU ve price None ise, vagon bulunamadı demektir
+                                elif wagon_state.get('status') == 'DOLU' and wagon_state.get('price') is None:
+                                    print(f"[INFO] ✅ State'e göre {watching_params['wagon_type']} vagonu bu hatta yok!")
+                                    last_status["wagon_not_found"] = True
+                                    wagon_display = watching_params['wagon_type'] if watching_params['wagon_type'] != 'ALL' else 'İstenen'
+                                    last_status["message"] = f"Bu güzergahta {wagon_display} koltuk bulunmamaktadır."
+                                else:
+                                    print(f"[INFO] Vagon mevcut: status={wagon_state.get('status')}, price={wagon_state.get('price')}")
+                            else:
+                                # State'de key bulunamadı = vagon yok (ANCAK ALL değilse)
+                                if watching_params['wagon_type'] != 'ALL':
+                                    print(f"[INFO] ✅ State'de eşleşen key bulunamadı - vagon bu güzergahta mevcut değil!")
+                                    last_status["wagon_not_found"] = True
+                                    wagon_display = watching_params['wagon_type']
+                                    last_status["message"] = f"Bu güzergahta {wagon_display} koltuk bulunmamaktadır."
+                                else:
+                                    print(f"[INFO] State'de ALL key'i yok ama normal, tek tek vagonlar kontrol ediliyor.")
                 except Exception as e:
                     print(f"[WARNING] State dosyası okunamadı: {e}")
+                    import traceback
+                    traceback.print_exc()
                 
                 # wagon_not_found zaten set edilmişse, mesajı ASLA değiştirme
                 if not last_status.get("wagon_not_found"):
@@ -182,7 +237,10 @@ def start_watching():
             "ticket_found": False,
             "wagon_not_found": False,
             "message": f"İzleme başlatıldı: {from_station} → {to_station}",
-            "params": watching_params
+            "params": watching_params,
+            "check_count": 0,
+            "last_check_time": "",
+            "logs": []
         }
         
         return jsonify({
@@ -227,14 +285,83 @@ def stop_watching():
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Mevcut durumu döndür"""
-    global last_status, watching_process
+    global last_status, watching_process, watching_params
     
     # Process hala çalışıyor mu kontrol et
     if watching_process:
         is_running = watching_process.poll() is None
         last_status["watching"] = is_running
-        if not is_running:
-            last_status["message"] = "İzleme tamamlandı"
+        
+        # Process bitti ve henüz wagon_not_found/ticket_found set edilmediyse
+        # State dosyasını doğrudan kontrol et (race condition fix)
+        if not is_running and watching_params:
+            if not last_status.get("wagon_not_found") and not last_status.get("ticket_found"):
+                try:
+                    state_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state.json')
+                    if os.path.exists(state_file):
+                        with open(state_file, 'r', encoding='utf-8') as f:
+                            state_data = json.load(f)
+                            
+                            # Önce direkt eşleşme dene (upper olmadan)
+                            state_key = f"{watching_params['from']}_{watching_params['to']}_{watching_params['date']}_{watching_params['wagon_type']}_{watching_params['passengers']}p"
+                            wagon_state = None
+                            
+                            if state_key in state_data:
+                                wagon_state = state_data[state_key]
+                                print(f"[DEBUG] get_status - Direkt eşleşme bulundu: {state_key}")
+                            else:
+                                # Türkçe karakter normalizasyonu fallback
+                                def normalize_turkish(s):
+                                    replacements = {
+                                        'ı': 'I', 'İ': 'I', 'i': 'I',
+                                        'ğ': 'G', 'Ğ': 'G',
+                                        'ü': 'U', 'Ü': 'U',
+                                        'ş': 'S', 'Ş': 'S',
+                                        'ö': 'O', 'Ö': 'O',
+                                        'ç': 'C', 'Ç': 'C'
+                                    }
+                                    result = s.upper()
+                                    for old, new in replacements.items():
+                                        result = result.replace(old, new)
+                                    return result
+                            
+                                # Normalize edilmiş state key oluştur
+                                from_normalized = normalize_turkish(watching_params['from'])
+                                to_normalized = normalize_turkish(watching_params['to'])
+                                search_key = f"{from_normalized}_{to_normalized}_{watching_params['date']}_{watching_params['wagon_type']}_{watching_params['passengers']}p"
+                                
+                                print(f"[DEBUG] Aranan key (normalize): {search_key}")
+                                
+                                # Fuzzy match ile state'den bul
+                                for key in state_data.keys():
+                                    normalized_key = normalize_turkish(key)
+                                    if normalized_key == search_key:
+                                        wagon_state = state_data[key]
+                                        print(f"[DEBUG] read_output - Fuzzy match bulundu: {key}")
+                                        break
+                            
+                            if wagon_state:
+                                print(f"[DEBUG] State data: {wagon_state}")
+                                # wagon_not_found flag'ini kontrol et
+                                if wagon_state.get('wagon_not_found') == True:
+                                    last_status["wagon_not_found"] = True
+                                    wagon_display = watching_params['wagon_type'] if watching_params['wagon_type'] != 'ALL' else 'İstenen'
+                                    last_status["message"] = f"Bu güzergahta {wagon_display} koltuk bulunmamaktadır."
+                                elif wagon_state.get('status') == 'DOLU' and wagon_state.get('price') is None:
+                                    last_status["wagon_not_found"] = True
+                                    wagon_display = watching_params['wagon_type'] if watching_params['wagon_type'] != 'ALL' else 'İstenen'
+                                    last_status["message"] = f"Bu güzergahta {wagon_display} koltuk bulunmamaktadır."
+                            else:
+                                print(f"[WARNING] State'de eşleşen key bulunamadı!")
+                except Exception as e:
+                    print(f"[WARNING] get_status - State dosyası okunamadı: {e}")
+                    import traceback
+                    traceback.print_exc()
+                
+                # Hala wagon_not_found yoksa varsayılan mesaj
+                if not last_status.get("wagon_not_found") and not last_status.get("ticket_found"):
+                    if not last_status.get("message") or "başlatıldı" in last_status.get("message", ""):
+                        last_status["message"] = "İzleme tamamlandı"
     
     return jsonify(last_status)
 

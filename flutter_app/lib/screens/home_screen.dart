@@ -23,6 +23,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Aktivite takibi
   int _checkCount = 0;
   String _lastCheckTime = '';
+  List<String> _logs = [];  // Log mesajları
   
   final ApiService _apiService = ApiService();
 
@@ -68,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
-      _statusCheckTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      _statusCheckTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
         try {
           final status = await _apiService.getStatus();
           
@@ -83,70 +84,69 @@ class _HomeScreenState extends State<HomeScreen> {
               _lastCheckTime = status['last_check_time'];
             });
           }
-          
-          // Bilet bulundu mu?
-          if (status['ticket_found'] == true) {
-            timer.cancel();
-            if (!mounted) return;
-            _showTicketFoundDialog(status['message'] ?? 'Bilet bulundu!');
+          // Log mesajlarını güncelle
+          if (status['logs'] != null) {
+            setState(() {
+              _logs = List<String>.from(status['logs']);
+            });
           }
-          
-          // İzleme durumu değişti mi?
-        if (status['watching'] == false && _isWatching) {
-          if (!mounted) return;
           
           bool ticketFound = status['ticket_found'] == true;
           bool wagonNotFound = status['wagon_not_found'] == true;
-          
-          setState(() {
-            _isWatching = false;
-            _checkCount = 0;
-            _lastCheckTime = '';
-          });
-          timer.cancel();
-          
-          // Vagon tipi bulunamadıysa özel uyarı göster
-          if (wagonNotFound) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.white),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        status['message'] ?? 'Seçilen vagon tipi bu güzergahta bulunmuyor',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-                backgroundColor: Colors.red[700],
-                duration: const Duration(seconds: 8),
-              ),
-            );
+          bool isServerWatching = status['watching'] == true;
+
+          // Bilet bulundu durumu
+          if (ticketFound) {
+             timer.cancel();
+             setState(() {
+               _isWatching = false;
+             });
+             if (!mounted) return;
+             
+             // Eğer vagon bulunamadıysa (nadiren çakışırsa) vagon yok dialogu
+             if (wagonNotFound) {
+                _showWagonNotFoundDialog("$_selectedWagonType");
+             } else {
+                _showTicketFoundDialog(status['message'] ?? 'Bilet bulundu!');
+             }
+             return; // Çıkış
           }
-          // İzleme sonuç mesajı göster (vagon bulunmadıysa zaten üstte gösterildi)
-          else if (!ticketFound) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    const Icon(Icons.info, color: Colors.white),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        status['message'] ?? 'İzleme tamamlandı - Bilet bulunamadı',
-                      ),
+
+          // Vagon bulunamadı ama ticketFound gelmediyse (Normalde watching false olur)
+          // Eğer server durmuşsa ve biz hala izliyorsak
+          if (!isServerWatching && _isWatching) {
+             timer.cancel();
+             setState(() {
+                _isWatching = false;
+                // Logları temizleme kalsın ki son loglar görünsün
+             });
+             
+             if (!mounted) return;
+             
+             if (wagonNotFound) {
+                _showWagonNotFoundDialog("$_selectedWagonType");
+             } else {
+                // İzleme tamamlandı (zaman aşımı veya manuel durdurma değil, sistem durmuş)
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.info, color: Colors.white),
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            status['message'] ?? 'İzleme tamamlandı.',
+                            overflow: TextOverflow.visible,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                backgroundColor: Colors.orange[700],
-                duration: const Duration(seconds: 5),
-              ),
-            );
+                    backgroundColor: Colors.orange[700],
+                    duration: const Duration(seconds: 5),
+                  ),
+                );
+             }
           }
-        }
         } catch (e) {
           print('Status check error: $e');
         }
@@ -408,6 +408,42 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            
+            // Log mesajları (izleme bitmiş olsa bile loglar varsa göster)
+            if (_logs.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[900],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                constraints: const BoxConstraints(maxHeight: 150),
+                child: SingleChildScrollView(
+                  reverse: true,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: _logs.map((log) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        log,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          color: log.contains('WARNING') || log.contains('⚠️')
+                              ? Colors.orange
+                              : log.contains('ERROR')
+                                  ? Colors.red
+                                  : log.contains('MÜSAİT')
+                                      ? Colors.green
+                                      : Colors.green[300],
+                        ),
+                      ),
+                    )).toList(),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
 
             // Buton
@@ -447,6 +483,60 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showTicketFoundDialog(String message) {
+     showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: 10),
+            Text('Bilet Bulundu!'),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 18),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: const Text('Tamam'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showWagonNotFoundDialog(String wagonType) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 10),
+            Text('Vagon Tipi Bulunamadı'),
+          ],
+        ),
+        content: Text(
+          'Bu güzergahta $wagonType koltuk bulunmamaktadır.',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Colors.red[50],
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tamam', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }

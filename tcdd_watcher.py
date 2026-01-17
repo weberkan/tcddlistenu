@@ -17,6 +17,12 @@ KRİTERLER:
 """
 
 import asyncio
+import sys
+
+# stdout flush et
+sys.stdout.reconfigure(line_buffering=True)
+print("Watcher script başlatılıyor...", flush=True)
+
 import json
 import os
 import sys
@@ -182,8 +188,8 @@ class TCDDWatcher:
     """TCDD e-bilet izleyicisi"""
 
     def __init__(self, from_station: str, to_station: str, date: str, wagon_type: WagonType = WagonType.ALL, passengers: int = 1):
-        self.from_station = from_station.upper()
-        self.to_station = to_station.upper()
+        self.from_station = from_station
+        self.to_station = to_station
         self.date = date
         self.wagon_type = wagon_type
         self.passengers = passengers
@@ -234,7 +240,14 @@ class TCDDWatcher:
         dropdown_items = await page.query_selector_all('.dropdown-item.station')
         for item in dropdown_items:
             text = await item.text_content()
-            if text and self.from_station in text.upper():
+            # Türkçe karakter duyarlı karşılaştırma
+            text_val = text.strip() if text else ""
+            
+            # Basit lower() dönüşümü (tr karakterler için replace gerekebilir ama şimdilik basic)
+            def simple_normalize(s):
+                return s.replace('İ', 'i').replace('I', 'ı').lower()
+            
+            if simple_normalize(self.from_station) in simple_normalize(text_val):
                 await item.click()
                 print(f"[INFO] '{text.strip()}' istasyonu seçildi")
                 station_found = True
@@ -263,7 +276,14 @@ class TCDDWatcher:
         dropdown_items = await page.query_selector_all('.dropdown-item.station')
         for item in dropdown_items:
             text = await item.text_content()
-            if text and self.to_station in text.upper():
+            # Türkçe karakter duyarlı karşılaştırma
+            text_val = text.strip() if text else ""
+            
+            # Basit lower() dönüşümü
+            def simple_normalize(s):
+                return s.replace('İ', 'i').replace('I', 'ı').lower()
+                
+            if simple_normalize(self.to_station) in simple_normalize(text_val):
                 await item.click()
                 print(f"[INFO] '{text.strip()}' istasyonu seçildi")
                 station_found = True
@@ -349,7 +369,10 @@ class TCDDWatcher:
         """
         Tüm vagon tiplerinin durumunu kontrol et
         """
-        print(f"[INFO] Tüm vagon tipleri durumu kontrol ediliyor ({self.wagon_type.value if self.wagon_type != WagonType.ALL else 'TÜMÜ'})...")
+        if self.wagon_type == WagonType.ALL:
+            print(f"[INFO] Tüm vagon tipleri durumu kontrol ediliyor...")
+        else:
+            print(f"[INFO] {self.wagon_type.value} vagon durumu kontrol ediliyor...")
 
         # JavaScript ile durum kontrolü
         status_data = await page.evaluate('''() => {
@@ -400,6 +423,10 @@ class TCDDWatcher:
             if wagon_data is None:
                 continue
 
+            # Erken filtreleme: Eğer ALL değilse ve bu vagon aranan değilse atla
+            if self.wagon_type != WagonType.ALL and wagon_name != self.wagon_type.value:
+                continue
+
             is_disabled = wagon_data['isDisabled']
             price = wagon_data['price']
             passengers = wagon_data.get('passengers', 1)
@@ -411,24 +438,14 @@ class TCDDWatcher:
                 status = 'MUSAIT'
                 print(f"[INFO] {wagon_name} vagon durumu: MÜSAİT - Fiyat: {price} - Yolcu: {passengers}")
 
-            # Sadece istenen vagon tipini ve yolcu sayısını kontrol et
-            if self.wagon_type != WagonType.ALL:
-                wagon_type_name = wagon_name
-                try:
-                    wagon_enum = WagonType(wagon_type_name)
-                    if wagon_enum != self.wagon_type:
-                        continue
-                except ValueError:
-                    continue
 
-            # Yolcu sayısı kontrolü
-            if self.passengers != passengers:
-                continue
+
+            # NOT: Yolcu sayısı kontrolü kaldırıldı - web sitesinden gelen değer güvenilir değil
 
             wagons[WagonType(wagon_name)] = {
                 'status': status,
                 'price': price if price != 'DOLU' else None,
-                'passengers': passengers
+                'passengers': self.passengers  # Kullanıcının girdiği yolcu sayısını kullan
             }
 
         return {
@@ -519,11 +536,31 @@ class TCDDWatcher:
                         print(f"[INFO] İzleme sonlandırılıyor...\n")
                         result['wagon_not_found'] = True
                         result['ticket_found'] = False
+                        
+                        # State dosyasına vagon bulunamadı durumunu kaydet
+                        state_key = self._get_state_key()
+                        self.state[state_key] = {
+                            'status': 'DOLU',
+                            'price': None,
+                            'passengers': self.passengers,
+                            'last_checked': current_timestamp,
+                            'wagon_not_found': True  # Özel flag
+                        }
+                        self._save_state(self.state)
+                        print(f"[INFO] State'e vagon bulunamadı durumu kaydedildi: {state_key}")
+                        
                         return result
 
-                # Her vagon tipi için DOLU → MÜSAİT geçişini kontrol et
+                # Her vagon tipi için kontrol
                 notification_sent_count = 0
+                found_wagon_types = []
+
                 for wagon_type_name, wagon_data in wagons.items():
+                    # Eğer spesifik bir vagon tipi aranıyorsa ve bu o değilse, loglama ve işlem yapma
+                    # Ancak ALL ise hepsini işle
+                    if self.wagon_type != WagonType.ALL and wagon_type_name != self.wagon_type.value:
+                        continue
+
                     wagon_type_enum = WagonType(wagon_type_name)
                     current_status = wagon_data['status']
                     current_price = wagon_data['price']
@@ -559,21 +596,38 @@ class TCDDWatcher:
                             ticket_status, wagon_type=wagon_type_enum.value
                         )
                         result['notification_sent'] = True
+                        result['ticket_found'] = True # Bilet bulundu
+                        found_wagon_types.append(wagon_type_name)
                         notification_sent_count += 1
 
                     elif current_status == 'MUSAIT':
                         print(f"\n[INFO] {wagon_type_enum.value} bilet zaten MÜSAİT durumunda")
                         if current_price:
                             print(f"[INFO] Fiyat: {current_price}")
+                        # Geriye dönük uyumluluk veya sürekli bulma için ticket_found işaretle
+                        result['ticket_found'] = True
+                        found_wagon_types.append(wagon_type_name)
                     elif current_status == 'DOLU':
                         print(f"\n[INFO] {wagon_type_enum.value} bilet DOLU durumunda")
 
+                # Bilet bulunduysa ve watching modundaysak çıkış yapmadan önce özel mesaj bas
+                if result.get('ticket_found') and found_wagon_types:
+                    # Tekrar edenleri temizle
+                    unique_types = list(set(found_wagon_types))
+                    types_str = ", ".join(unique_types)
+                    print(f"[SUCCESS] BİLET BULUNDU! ({types_str}) Kontrol sonlandırılıyor.")
+                    sys.exit(1)
+
                 # Hiç bilet açılmadıysa bilgi ver
-                if notification_sent_count == 0:
+                if notification_sent_count == 0 and not result.get('ticket_found'):
                     print(f"\n[INFO] Henüz {self.wagon_type.value if self.wagon_type != WagonType.ALL else 'TÜMÜ'} vagon açılmadı")
 
                 # 6. State'i güncelle
                 for wagon_type_enum, wagon_data in wagons.items():
+                    # State güncellemede de filtre uygula
+                    if self.wagon_type != WagonType.ALL and wagon_type_enum.value != self.wagon_type.value:
+                        continue 
+                        
                     state_key = self._get_state_key_for_wagon(wagon_type_enum, wagon_data.get('passengers', 1))
                     self.state[state_key] = {
                         'status': wagon_data['status'],
