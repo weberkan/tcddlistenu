@@ -1,0 +1,4 @@
+playwright==1.41.0
+firebase-admin==6.4.0
+pydantic==2.5.3
+python-dotenv==1.0.0

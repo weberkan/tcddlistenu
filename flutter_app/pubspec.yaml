@@ -1,0 +1,24 @@
+name: tcdd_bilet_app
+description: TCDD Bilet İzleyicisi Mobil Uygulaması
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^2.24.2
+  firebase_messaging: ^14.7.10
+  # flutter_local_notifications: ^16.3.0  # Temporarily disabled due to Android API 33+ compatibility
+  cupertino_icons: ^1.0.2
+  http: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
