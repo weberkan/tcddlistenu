@@ -41,7 +41,10 @@ class WagonType(str, Enum):
     EKONOMI = "EKONOMİ"
     BUSINESS = "BUSINESS"
     YATAKLI = "YATAKLI"
+    LOCA = "LOCA"
     ALL = "ALL"
+
+
 
 try:
     from firebase_admin import credentials, messaging, initialize_app, get_app
@@ -390,6 +393,7 @@ class TCDDWatcher:
                 if (text.includes('EKONOMİ')) type = 'EKONOMİ';
                 else if (text.includes('BUSINESS')) type = 'BUSINESS';
                 else if (text.includes('YATAKLI')) type = 'YATAKLI';
+                else if (text.includes('LOCA')) type = 'LOCA';
 
                 if (type) {
                     const isDisabled = btn.classList.contains('disabled') || btn.hasAttribute('disabled');
@@ -571,6 +575,10 @@ class TCDDWatcher:
                     previous_status = self.state.get(state_key, {}).get('status')
 
                     # Sadece DOLU → MÜSAİT geçişinde aksiyon al
+                    if current_passengers < self.passengers and current_status == 'MUSAIT':
+                         print(f"[INFO] {wagon_type_enum.value} MÜSAİT ancak yeterli koltuk yok ({current_passengers} < {self.passengers})")
+                         current_status = 'DOLU' # Yetersiz koltuk = DOLU muamelesi yap
+
                     if previous_status == 'DOLU' and current_status == 'MUSAIT':
                         print("\n" + "!"*60)
                         print(f"! {wagon_type_enum.value} BİLET AÇILDI !")
@@ -596,8 +604,9 @@ class TCDDWatcher:
                             ticket_status, wagon_type=wagon_type_enum.value
                         )
                         result['notification_sent'] = True
-                        result['ticket_found'] = True # Bilet bulundu
-                        found_wagon_types.append(wagon_type_name)
+                        result['ticket_found'] = True
+                        # Format: EKONOMİ - 150 TL
+                        found_wagon_types.append(f"{wagon_type_enum.value} - {current_price}")
                         notification_sent_count += 1
 
                     elif current_status == 'MUSAIT':
@@ -606,7 +615,8 @@ class TCDDWatcher:
                             print(f"[INFO] Fiyat: {current_price}")
                         # Geriye dönük uyumluluk veya sürekli bulma için ticket_found işaretle
                         result['ticket_found'] = True
-                        found_wagon_types.append(wagon_type_name)
+                        # Format: EKONOMİ - 150 TL
+                        found_wagon_types.append(f"{wagon_type_enum.value} - {current_price}")
                     elif current_status == 'DOLU':
                         print(f"\n[INFO] {wagon_type_enum.value} bilet DOLU durumunda")
 
@@ -680,7 +690,7 @@ NOTLAR:
     parser.add_argument('-d', '--date', required=True,
                         help='Tarih (ör: 2026-01-20)')
     parser.add_argument('-w', '--wagon-type', dest='wagon_type',
-                        choices=['EKONOMİ', 'BUSINESS', 'YATAKLI', 'ALL'],
+                        choices=['EKONOMİ', 'BUSINESS', 'YATAKLI', 'LOCA', 'ALL'],
                         default='ALL',
                         help='Vagon tipi (varsayılan: ALL)')
     parser.add_argument('-p', '--passengers', dest='passengers',
@@ -704,6 +714,7 @@ NOTLAR:
         'EKONOMİ': WagonType.EKONOMI,
         'BUSINESS': WagonType.BUSINESS,
         'YATAKLI': WagonType.YATAKLI,
+        'LOCA': WagonType.LOCA,
         'ALL': WagonType.ALL
     }
     wagon_type = wagon_type_map[args.wagon_type]

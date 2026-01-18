@@ -11,7 +11,7 @@ class HomeScreen extends StatefulWidget {
   _HomeScreenState createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
   // Renk tanımları
   static const Color tcddRed = Color(0xFFE30613);
   static const Color backgroundLight = Color(0xFFF2F4F7);
@@ -29,6 +29,10 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isWatching = false;
   Timer? _statusCheckTimer;
   
+  // Animation
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  
   // Aktivite takibi
   int _checkCount = 0;
   String _lastCheckTime = '--:--:--';
@@ -37,8 +41,19 @@ class _HomeScreenState extends State<HomeScreen> {
   final ApiService _apiService = ApiService();
 
   @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(seconds: 1),
+      vsync: this,
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.2, end: 1.0).animate(_pulseController);
+  }
+
+  @override
   void dispose() {
     _statusCheckTimer?.cancel();
+    _pulseController.dispose();
     super.dispose();
   }
 
@@ -355,11 +370,43 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(18)),
-            child: const Icon(Icons.settings, color: textGray, size: 20),
+          InkWell(
+            onTap: () {
+              showDialog(
+                context: context,
+                barrierColor: Colors.transparent,
+                builder: (context) {
+                  Future.delayed(const Duration(seconds: 1), () {
+                    if (context.mounted) Navigator.of(context).pop();
+                  });
+                  return Dialog(
+                    backgroundColor: Colors.transparent,
+                    elevation: 0,
+                    insetPadding: EdgeInsets.zero,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.8),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          'Yakında!',
+                          style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+              );
+            },
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(18)),
+              child: const Icon(Icons.settings, color: textGray, size: 20),
+            ),
           ),
         ],
       ),
@@ -385,14 +432,26 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             child: Row(
               children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: _isWatching ? Colors.green : Colors.grey,
-                    shape: BoxShape.circle,
+                _isWatching 
+                ? FadeTransition(
+                    opacity: _pulseAnimation,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.grey,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
                 const SizedBox(width: 6),
                 Text(
                   _isWatching ? 'TAKİP AKTİF' : 'TAKİP PASİF',
@@ -578,21 +637,28 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         const Text('VAGON TERCİHİ', style: TextStyle(color: textGray, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
         const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          // 'ALL' yerine 'TÜMÜ' kullanılıyor, backend'e gönderirken dönüştürülüyor
-          children: ['EKONOMİ', 'BUSINESS', 'YATAKLI', 'TÜMÜ'].map((type) => _buildWagonCard(type)).toList(),
+        Container(
+          width: double.infinity,
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
+            children: ['EKONOMİ', 'BUSINESS', 'YATAKLI', 'LOCA'].map((type) => _buildWagonCard(type)).toList(),
+          ),
         ),
+        const SizedBox(height: 8),
+        _buildWagonCard('TÜMÜ', isFullWidth: true),
       ],
     );
   }
 
-  Widget _buildWagonCard(String type) {
+  Widget _buildWagonCard(String type, {bool isFullWidth = false}) {
     bool isSelected = _selectedWagonType == type;
     return GestureDetector(
       onTap: _isWatching ? null : () => setState(() => _selectedWagonType = type),
       child: Container(
+        width: isFullWidth ? double.infinity : null,
+        alignment: isFullWidth ? Alignment.center : null,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: isSelected ? backgroundLight : const Color(0xFFF9FAFB),
@@ -924,65 +990,107 @@ class _TicketFoundDialogState extends State<TicketFoundDialog> {
                   ),
                   const SizedBox(height: 10),
                   
-                  // Grid: Tarih & Vagon
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF9FAFB),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFF3F4F6)),
-                          ),
+                  // Date Card (Full Width)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFF3F4F6)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                           padding: const EdgeInsets.all(8),
+                           decoration: BoxDecoration(
+                             color: Colors.white,
+                             borderRadius: BorderRadius.circular(8),
+                           ),
+                           child: const Icon(Icons.calendar_month, color: Color(0xFFE30613), size: 18),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text('TARİH', style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 10, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  const Icon(Icons.calendar_month, color: Color(0xFFE30613), size: 18),
-                                  const SizedBox(width: 6),
-                                  Expanded(child: Text(widget.date, style: const TextStyle(color: Color(0xFF121617), fontSize: 13, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)),
-                                ],
-                              ),
+                              const SizedBox(height: 2),
+                              Text(widget.date, style: const TextStyle(color: Color(0xFF121617), fontSize: 14, fontWeight: FontWeight.w800)),
                             ],
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF9FAFB),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFF3F4F6)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('VAGON / SINIF', style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 10, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              Row(
+                        )
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Found Wagons List Section
+                  Container(
+                    width: double.infinity,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                         const Padding(
+                           padding: EdgeInsets.only(left: 4, bottom: 8),
+                           child: Text('BULUNAN BİLETLER', style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                         ),
+                         ...widget.wagonType.split(', ').map((wagonInfo) {
+                            // wagonInfo format: "EKONOMİ - 150 TL" or "LOCA"
+                            String name = wagonInfo;
+                            String price = '';
+                            if (wagonInfo.contains(' - ')) {
+                               final parts = wagonInfo.split(' - ');
+                               name = parts[0];
+                               price = parts.length > 1 ? parts[1] : '';
+                            } else if (wagonInfo == 'ALL' || wagonInfo == 'TÜMÜ') {
+                               name = 'Tümü';
+                            }
+
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFECFDF5), // Green-50
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFD1FAE5)), // Green-100
+                              ),
+                              child: Row(
                                 children: [
-                                  const Icon(Icons.airline_seat_recline_extra, color: Color(0xFFE30613), size: 18),
-                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.all(6),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.check, color: Color(0xFF059669), size: 14), // Green-600
+                                  ),
+                                  const SizedBox(width: 12),
                                   Expanded(
                                     child: Text(
-                                      widget.wagonType == 'ALL' ? 'Tümü' : (widget.wagonType == 'TÜMÜ' ? 'Tümü' : widget.wagonType),
-                                      style: const TextStyle(color: Color(0xFF121617), fontSize: 13, fontWeight: FontWeight.w800),
-                                      overflow: TextOverflow.ellipsis,
+                                      name,
+                                      style: const TextStyle(color: Color(0xFF064E3B), fontSize: 13, fontWeight: FontWeight.w800), // Green-900
                                     ),
                                   ),
+                                  if (price.isNotEmpty)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white, 
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(color: const Color(0xFF059669).withOpacity(0.2)),
+                                      ),
+                                      child: Text(
+                                        price,
+                                        style: const TextStyle(color: Color(0xFF059669), fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
                                 ],
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+                            );
+                         }).toList(),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 32),
 
