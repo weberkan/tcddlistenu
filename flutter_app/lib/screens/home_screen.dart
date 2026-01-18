@@ -157,7 +157,13 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await _apiService.stopWatching();
       _statusCheckTimer?.cancel();
-      setState(() => _isWatching = false);
+      setState(() {
+        _isWatching = false;
+        // Reset UI to clean state
+        _checkCount = 0;
+        _lastCheckTime = '--:--:--';
+        _logs.clear();
+      });
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Hata: $e')));
@@ -181,16 +187,27 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showWagonNotFoundDialog(String wagonType) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [Icon(Icons.error_outline, color: Colors.red), SizedBox(width: 10), Text('Vagon Tipi Bulunamadı')],
-        ),
-        content: Text('Bu güzergahta $wagonType koltuk bulunmamaktadır.', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.red[50],
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Tamam', style: TextStyle(color: Colors.red)))],
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.6),
+      builder: (context) => WagonNotFoundDialog(
+        from: _fromController.text,
+        to: _toController.text,
+        date: _dateController.text,
+        wagonType: wagonType,
+        onEditCriteria: () {
+          Navigator.pop(context);
+          setState(() {
+            _isWatching = false;
+            _checkCount = 0;
+            _lastCheckTime = '--:--:--';
+            _logs.clear();
+          });
+        },
       ),
     );
   }
+
+  // ... (rest of the file)
 
   Future<void> _selectDate(BuildContext context) async {
     if (_isWatching) return;
@@ -1022,6 +1039,252 @@ class _TicketFoundDialogState extends State<TicketFoundDialog> {
           ],
         )
       );
+  }
+}
+
+
+
+// Custom Wagon Not Found Dialog
+class WagonNotFoundDialog extends StatelessWidget {
+  final String from;
+  final String to;
+  final String date;
+  final String wagonType;
+  final VoidCallback onEditCriteria;
+
+  const WagonNotFoundDialog({
+    Key? key,
+    required this.from,
+    required this.to,
+    required this.date,
+    required this.wagonType,
+    required this.onEditCriteria,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(40), // 2.5rem
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 25,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Icon Header
+            Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFFFFBEB), // Amber-50
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.train, color: Color(0xFFF59E0B), size: 48), // Amber-500
+                ),
+                Positioned(
+                  top: -4,
+                  right: -4,
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF59E0B), // Amber-500
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                    child: const Icon(Icons.warning, color: Colors.white, size: 12),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            
+            // Title
+            const Text(
+              'VAGON TİPİ BULUNAMADI',
+              style: TextStyle(
+                color: Color(0xFF121617),
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.5,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            
+            // Description (RichText)
+            RichText(
+              textAlign: TextAlign.center,
+              text: TextSpan(
+                style: const TextStyle(
+                  color: Color(0xFF6B7280), // Gray-500
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  height: 1.5,
+                  fontFamily: 'Roboto', // Default flutter font usually
+                ),
+                children: [
+                  const TextSpan(text: 'Aradığınız güzergahta seçilen vagon tipi\n'),
+                  TextSpan(
+                    text: '($wagonType)',
+                    style: const TextStyle(color: Color(0xFFE30613), fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(text: ' hizmet vermemektedir.'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            // Info Cards
+            // Route Card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF9FAFB), // Gray-50
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFF3F4F6)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 2)],
+                    ),
+                    child: const Icon(Icons.route, color: Color(0xFFE30613), size: 20),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('GÜZERGAH', style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 10, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        Text('$from — $to', style: const TextStyle(color: Color(0xFF121617), fontSize: 13, fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            
+            // Grid: Date & Selection
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFF3F4F6)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('TARİH', style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 10, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.calendar_month, color: Color(0xFFE30613), size: 18),
+                            const SizedBox(width: 6),
+                            Expanded(child: Text(date, style: const TextStyle(color: Color(0xFF121617), fontSize: 13, fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2), // Red-50
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFFEE2E2)), // Red-100
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('TERCİH (HATALI)', style: TextStyle(color: const Color(0xFFE30613).withOpacity(0.6), fontSize: 10, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Icon(Icons.event_seat, color: Color(0xFFE30613), size: 18), // Filled icon usually
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                wagonType == 'ALL' ? 'Tümü' : (wagonType == 'TÜMÜ' ? 'Tümü' : wagonType),
+                                style: const TextStyle(color: Color(0xFFE30613), fontSize: 13, fontWeight: FontWeight.w900),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 32),
+
+            // Actions
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: onEditCriteria,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFE30613),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  elevation: 4,
+                  shadowColor: const Color(0xFFE30613).withOpacity(0.3),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.tune, size: 20),
+                    SizedBox(width: 12),
+                    Text('KRİTERLERİ DÜZENLE', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+            const Text(
+              'Lütfen farklı bir vagon tipi seçerek tekrar deneyiniz.',
+              style: TextStyle(color: Color(0xFFD1D5DB), fontSize: 10, fontWeight: FontWeight.w500, fontStyle: FontStyle.italic),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
