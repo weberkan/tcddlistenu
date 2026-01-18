@@ -1,4 +1,4 @@
-package com.example.tcdd_bilet_app
+package com.example.biletbulundu
 
 import io.flutter.embedding.android.FlutterActivity
 
